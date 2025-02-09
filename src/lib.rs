@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     fmt::Debug,
-    ops::{Bound, Range, RangeBounds},
+    ops::{Bound, Index, Range, RangeBounds},
 };
 
 use iter::Iter;
@@ -37,6 +37,17 @@ where
 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<T> Index<usize> for RangeVec<T>
+where
+    T: Default + Eq,
+{
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index)
     }
 }
 
@@ -92,16 +103,13 @@ where
         }
     }
 
-    pub fn get<F, R>(&self, index: usize, f: F) -> R
-    where
-        F: FnOnce(&T) -> R,
-    {
+    pub fn get(&self, index: usize) -> &T {
         match index
             .checked_sub(self.offset)
             .and_then(|index| self.data.get(index))
         {
-            Some(item) => f(item),
-            None => f(&Default::default()),
+            Some(item) => item,
+            None => &self.default_item,
         }
     }
 
@@ -233,19 +241,6 @@ where
     }
 }
 
-impl<T> RangeVec<T>
-where
-    T: Default + Clone,
-{
-    pub fn get_owned(&self, index: usize) -> T {
-        index
-            .checked_sub(self.offset)
-            .and_then(|index| self.data.get(index))
-            .cloned()
-            .unwrap_or_default()
-    }
-}
-
 fn range_bounds_to_range(range_bounds: impl RangeBounds<usize>) -> Range<usize> {
     let start = match range_bounds.start_bound() {
         Bound::Excluded(bound) => *bound + 1,
@@ -265,10 +260,11 @@ mod test {
     use super::RangeVec;
 
     #[test]
-    fn test_get() {
+    fn test_get_index() {
         let range_vec = RangeVec::<u8>::new();
-        assert_eq!(range_vec.get(0, |v| *v), 0);
-        assert_eq!(range_vec.get_owned(1_000_000), 0);
+        assert_eq!(range_vec.get(0), &0);
+        assert_eq!(range_vec.get(100), &0);
+        assert_eq!(range_vec[200], 0);
         assert!(range_vec.is_empty());
     }
 
@@ -277,10 +273,10 @@ mod test {
         let mut range_vec = RangeVec::<u8>::new();
         range_vec.set(5, 10);
         range_vec.get_mut(10, |v| *v = 20);
-        assert_eq!(range_vec.get_owned(0), 0);
-        assert_eq!(range_vec.get(5, |v| *v), 10);
-        assert_eq!(range_vec.get_owned(10), 20);
-        assert_eq!(range_vec.get_owned(12), 0);
+        assert_eq!(range_vec[0], 0);
+        assert_eq!(range_vec.get(5), &10);
+        assert_eq!(range_vec.get(10), &20);
+        assert_eq!(range_vec[12], 0);
         assert_eq!(range_vec.range(), Some(5..11));
 
         range_vec.get_mut(5, |v| *v = 0);
@@ -326,6 +322,6 @@ mod test {
         range_vec.set(7, 1);
         range_vec.mutate_non_default(|_, value| *value += 1);
         assert_eq!(range_vec.range(), Some(7..8));
-        assert_eq!(range_vec.get_owned(7), 2);
+        assert_eq!(range_vec[7], 2);
     }
 }

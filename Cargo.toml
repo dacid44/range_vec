@@ -1,6 +1,12 @@
 [package]
 name = "range_vec"
+description = "Fast indexed access to a range of mostly-default values"
 version = "0.1.1"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+keywords = ["range", "index"]
+categories = ["data-structures"]
+authors = ["Keegan Conlee"]
+repository = "https://github.com/dacid44/range_vec"
 
 [dependencies]

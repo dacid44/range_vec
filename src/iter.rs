@@ -2,6 +2,10 @@ use std::{collections::vec_deque, iter::FusedIterator, ops::Range};
 
 use crate::RangeVec;
 
+/// An iterator over the elements of a [`RangeVec`].
+///
+/// This `struct` is created by the [`iter`](RangeVec::iter) method on [`RangeVec`]. See its
+/// documentation for more.
 pub struct Iter<'a, T: 'a> {
     iter_range: Range<usize>,
     filled_range: Range<usize>,

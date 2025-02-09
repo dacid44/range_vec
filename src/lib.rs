@@ -67,6 +67,10 @@ impl<T> RangeVec<T> {
     pub fn iter(&self, range: impl RangeBounds<usize>) -> Iter<'_, T> {
         Iter::new(self, range_bounds_to_range(range))
     }
+
+    pub fn clear(&mut self) {
+        self.data.clear();
+    }
 }
 
 impl<T> RangeVec<T>
@@ -93,6 +97,7 @@ where
             for _ in 0..additional {
                 self.data.push_front(T::default());
             }
+            self.offset = index;
         } else if index >= self.offset + self.data.len() {
             // index >= offset + length: grow right and insert value
             let additional = index - (self.offset + self.data.len()) + 1;
@@ -127,14 +132,10 @@ where
         match self
             .data
             .iter()
-            .rev()
-            .position(|item| item != &self.default_item)
+            .rposition(|item| item != &self.default_item)
         {
             Some(index) => {
-                let Some(index) = index.checked_sub(1) else {
-                    return;
-                };
-                self.data.drain(self.data.len() - index..);
+                self.data.drain(index + 1..);
             }
             None => self.data.clear(),
         }
@@ -239,6 +240,96 @@ where
             self.shrink(index);
         }
     }
+
+    pub fn truncate(&mut self, range: impl RangeBounds<usize>) {
+        let range = range_bounds_to_range(range);
+        if range.is_empty() {
+            // Clear the entire buffer if the range is empty
+            self.data.clear();
+            return;
+        }
+
+        // Drain right of range
+        let new_end = range.end.saturating_sub(self.offset).min(self.data.len());
+        self.data.drain(new_end..);
+
+        // Drain left of range
+        let new_start = range.start.saturating_sub(self.offset).min(self.data.len());
+        self.data.drain(..new_start);
+        self.offset += new_start;
+
+        self.shrink_left();
+        self.shrink_right();
+    }
+
+    pub fn as_mut_slices<F, R>(&mut self, range: impl RangeBounds<usize>, f: F) -> R
+    where
+        F: FnOnce(&mut [T], &mut [T]) -> R,
+    {
+        let range = range_bounds_to_range(range);
+        if range.is_empty() {
+            return f(&mut [], &mut []);
+        }
+
+        self.grow_to_include(range.start);
+        self.grow_to_include(range.end);
+        let data_len = self.data.len();
+        let (mut left, mut right) = self.data.as_mut_slices();
+        let split_point = self.offset + left.len();
+
+        if let Some(overlap) = split_point.checked_sub(range.end) {
+            right = &mut [];
+            let left_len = left.len();
+            left = &mut left[..left_len - overlap];
+        } else if let Some(overlap) = (self.offset + data_len).checked_sub(range.end) {
+            let right_len = right.len();
+            right = &mut right[..right_len - overlap];
+        }
+
+        if let Some(overlap) = range.start.checked_sub(split_point) {
+            left = &mut [];
+            right = &mut right[overlap..];
+        } else if let Some(overlap) = range.start.checked_sub(self.offset) {
+            left = &mut left[overlap..];
+        }
+
+        if left.is_empty() && !right.is_empty() {
+            left = right;
+            right = &mut [];
+        }
+
+        let ret = f(left, right);
+        self.shrink_left();
+        self.shrink_right();
+        ret
+    }
+
+    pub fn make_contiguous<F, R>(&mut self, range: impl RangeBounds<usize>, f: F) -> R
+    where
+        F: FnOnce(&mut [T]) -> R,
+    {
+        let range = range_bounds_to_range(range);
+        if range.is_empty() {
+            return f(&mut []);
+        }
+
+        self.grow_to_include(range.start);
+        self.grow_to_include(range.end);
+
+        let data_len = self.data.len();
+        let mut slice = self.data.make_contiguous();
+        if let Some(overlap) = (self.offset + data_len).checked_sub(range.end) {
+            slice = &mut slice[..data_len - overlap];
+        }
+        if let Some(overlap) = range.start.checked_sub(self.offset) {
+            slice = &mut slice[overlap..];
+        }
+
+        let ret = f(slice);
+        self.shrink_left();
+        self.shrink_right();
+        ret
+    }
 }
 
 fn range_bounds_to_range(range_bounds: impl RangeBounds<usize>) -> Range<usize> {
@@ -273,18 +364,21 @@ mod test {
         let mut range_vec = RangeVec::<u8>::new();
         range_vec.set(5, 10);
         range_vec.get_mut(10, |v| *v = 20);
+        range_vec.set(3, 5);
         assert_eq!(range_vec[0], 0);
         assert_eq!(range_vec.get(5), &10);
         assert_eq!(range_vec.get(10), &20);
         assert_eq!(range_vec[12], 0);
-        assert_eq!(range_vec.range(), Some(5..11));
+        assert_eq!(range_vec.range(), Some(3..11));
 
-        range_vec.get_mut(5, |v| *v = 0);
-        assert_eq!(range_vec.range(), Some(10..11));
+        range_vec.get_mut(3, |v| *v = 0);
+        assert_eq!(range_vec.range(), Some(5..11));
         range_vec.set(10, 0);
+        range_vec.set(5, 0);
         assert!(range_vec.is_empty());
 
         range_vec.set(20, 100);
+        range_vec.reset(20);
         range_vec.reset(20);
         assert!(range_vec.is_empty());
     }
@@ -323,5 +417,60 @@ mod test {
         range_vec.mutate_non_default(|_, value| *value += 1);
         assert_eq!(range_vec.range(), Some(7..8));
         assert_eq!(range_vec[7], 2);
+    }
+
+    #[test]
+    fn test_truncate() {
+        let mut range_vec = RangeVec::<u8>::new();
+        range_vec.set(5, 5);
+        range_vec.set(6, 6);
+        range_vec.set(7, 7);
+        range_vec.set(8, 8);
+        range_vec.set(9, 9);
+        range_vec.truncate(6..9);
+        assert_eq!(range_vec.range(), Some(6..9));
+
+        range_vec.truncate(10..15);
+        assert!(range_vec.is_empty());
+    }
+
+    #[test]
+    fn test_as_mut_slices() {
+        let mut range_vec = RangeVec::<i32>::new();
+        range_vec.set(6, 6);
+        range_vec.set(7, 7);
+        range_vec.set(8, 8);
+        range_vec.set(9, -1);
+        range_vec.set(5, 5);
+        range_vec.as_mut_slices(3..10, |left, right| {
+            for item in left.iter_mut().chain(right.iter_mut()) {
+                *item += 1;
+            }
+        });
+        assert_eq!(range_vec.range(), Some(3..9));
+        assert_eq!(
+            range_vec.iter(3..9).copied().collect::<Vec<_>>(),
+            vec![1, 1, 6, 7, 8, 9]
+        );
+    }
+
+    #[test]
+    fn test_make_contiguous() {
+        let mut range_vec = RangeVec::<i32>::new();
+        range_vec.set(6, 6);
+        range_vec.set(7, 7);
+        range_vec.set(8, 8);
+        range_vec.set(9, -1);
+        range_vec.set(5, 5);
+        range_vec.make_contiguous(3..10, |slice| {
+            for item in slice {
+                *item += 1;
+            }
+        });
+        assert_eq!(range_vec.range(), Some(3..9));
+        assert_eq!(
+            range_vec.iter(3..9).copied().collect::<Vec<_>>(),
+            vec![1, 1, 6, 7, 8, 9]
+        );
     }
 }

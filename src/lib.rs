@@ -6,7 +6,7 @@
 
 use std::{
     collections::VecDeque,
-    fmt::Debug,
+    fmt::{Debug, Display},
     ops::{Bound, Index, Range, RangeBounds},
 };
 
@@ -28,8 +28,8 @@ mod iter;
 /// Because of this, `RangeVec` currently has no `.iter_mut()` method, as without a guard it would
 /// not be possible to adjust the backing storage after a mutation. However, though less flexible,
 /// the [`mutate_many`] or [`mutate_non_default`] methods may work instead. The slice access methods
-/// [`as_mut_slices`] and [`make_contiguous`] may also be of interest. For the same reason,
-/// `RangeVec` implements [`Index`] so you can get elements using square bracked syntax:
+/// [`as_mut_slices_with`] and [`make_contiguous_with`] may also be of interest. For the same
+/// reason, `RangeVec` implements [`Index`] so you can get elements using square bracked syntax:
 /// `let x = my_range_vec[50];`, but does not implement [`IndexMut`]. Again, this may be possible in
 /// the future using a guard API.
 ///
@@ -50,17 +50,17 @@ mod iter;
 ///
 /// [`mutate_many`]: RangeVec::mutate_many
 /// [`mutate_non_default`]: RangeVec::mutate_non_default
-/// [`as_mut_slices`]: RangeVec::as_mut_slices
-/// [`make_contiguous`]: RangeVec::make_contiguous
+/// [`as_mut_slices_with`]: RangeVec::as_mut_slices_with
+/// [`make_contiguous_with`]: RangeVec::make_contiguous_with
 ///
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RangeVec<T> {
     data: VecDeque<T>,
     offset: usize,
     default_item: T,
 }
 
-impl<T> Debug for RangeVec<T>
+impl<T> Display for RangeVec<T>
 where
     T: Debug,
 {
@@ -332,16 +332,16 @@ where
     /// ```
     /// # use range_vec::RangeVec;
     /// let mut range_vec: RangeVec<i32> = RangeVec::new();
-    /// range_vec.get_mut(5, |v| *v = 1);
-    /// range_vec.get_mut(7, |v| *v += 2);
-    /// range_vec.get_mut(9, |v| *v = 3);
+    /// range_vec.get_mut_with(5, |v| *v = 1);
+    /// range_vec.get_mut_with(7, |v| *v += 2);
+    /// range_vec.get_mut_with(9, |v| *v = 3);
     /// assert_eq!(range_vec.range(), Some(5..10));
     ///
-    /// range_vec.get_mut(5, |v| *v -= 1);
-    /// range_vec.get_mut(9, |v| *v = 0);
+    /// range_vec.get_mut_with(5, |v| *v -= 1);
+    /// range_vec.get_mut_with(9, |v| *v = 0);
     /// assert_eq!(range_vec.range(), Some(7..8));
     /// ```
-    pub fn get_mut<F, R>(&mut self, index: usize, f: F) -> R
+    pub fn get_mut_with<F, R>(&mut self, index: usize, f: F) -> R
     where
         F: FnOnce(&mut T) -> R,
     {
@@ -366,7 +366,7 @@ where
     }
 
     /// Mutate a range of values. This method is equivalent to calling
-    /// [`get_mut`](RangeVec::get_mut) repeatedly on an entire range of values, except it does not
+    /// [`get_mut_with`](RangeVec::get_mut_with) repeatedly on an entire range of values, except it does not
     /// pass through the closure's return value. In addition, it only makes the checks to grow and
     /// shrink the backing storage once. The closure is also passed the index as its first
     /// argument.
@@ -512,8 +512,8 @@ where
     /// value returned from `f` will be returned from the method.
     ///
     /// If you need to access a single contiguous slice and don't care about paying the cost to
-    /// rearrange the backing storage, use [`make_contiguous`](RangeVec::make_contiguous).
-    pub fn as_mut_slices<F, R>(&mut self, range: impl RangeBounds<usize>, f: F) -> R
+    /// rearrange the backing storage, use [`make_contiguous_with`](RangeVec::make_contiguous_with).
+    pub fn as_mut_slices_with<F, R>(&mut self, range: impl RangeBounds<usize>, f: F) -> R
     where
         F: FnOnce(&mut [T], &mut [T]) -> R,
     {
@@ -560,8 +560,8 @@ where
     /// afterwards as appropriate. Any value returned from `f` will be returned freom the method.
     ///
     /// If you don't want to pay the cost to rearrange the backing storage but are okay with the
-    /// data being split up into two slices, use [`as_mut_slices`](RangeVec::as_mut_slices).
-    pub fn make_contiguous<F, R>(&mut self, range: impl RangeBounds<usize>, f: F) -> R
+    /// data being split up into two slices, use [`as_mut_slices_with`](RangeVec::as_mut_slices_with).
+    pub fn make_contiguous_with<F, R>(&mut self, range: impl RangeBounds<usize>, f: F) -> R
     where
         F: FnOnce(&mut [T]) -> R,
     {
@@ -624,10 +624,10 @@ mod test {
     }
 
     #[test]
-    fn test_set_get_mut_reset() {
+    fn test_set_get_mut_with_reset() {
         let mut range_vec = RangeVec::<u8>::new();
         range_vec.set(5, 10);
-        range_vec.get_mut(10, |v| *v = 20);
+        range_vec.get_mut_with(10, |v| *v = 20);
         range_vec.set(3, 5);
         assert_eq!(range_vec[0], 0);
         assert_eq!(range_vec.get(5), &10);
@@ -635,7 +635,7 @@ mod test {
         assert_eq!(range_vec[12], 0);
         assert_eq!(range_vec.range(), Some(3..11));
 
-        range_vec.get_mut(3, |v| *v = 0);
+        range_vec.get_mut_with(3, |v| *v = 0);
         assert_eq!(range_vec.range(), Some(5..11));
         range_vec.set(10, 0);
         range_vec.set(5, 0);
@@ -648,14 +648,14 @@ mod test {
     }
 
     #[test]
-    fn test_debug() {
+    fn test_display() {
         let mut range_vec = RangeVec::<u8>::new();
-        assert_eq!(format!("{:?}", range_vec), "RangeVec { <empty> }");
+        assert_eq!(format!("{}", range_vec), "RangeVec { <empty> }");
         range_vec.set(5, 1);
         range_vec.set(7, 2);
         range_vec.set(9, 3);
         assert_eq!(
-            format!("{:?}", range_vec),
+            format!("{}", range_vec),
             "RangeVec { range: 5..10, data: [1, 0, 2, 0, 3] }"
         );
     }
@@ -699,14 +699,14 @@ mod test {
     }
 
     #[test]
-    fn test_as_mut_slices() {
+    fn test_as_mut_slices_with() {
         let mut range_vec = RangeVec::<i32>::new();
         range_vec.set(6, 6);
         range_vec.set(7, 7);
         range_vec.set(8, 8);
         range_vec.set(9, -1);
         range_vec.set(5, 5);
-        range_vec.as_mut_slices(3..10, |left, right| {
+        range_vec.as_mut_slices_with(3..10, |left, right| {
             for item in left.iter_mut().chain(right.iter_mut()) {
                 *item += 1;
             }
@@ -719,14 +719,14 @@ mod test {
     }
 
     #[test]
-    fn test_make_contiguous() {
+    fn test_make_contiguous_with() {
         let mut range_vec = RangeVec::<i32>::new();
         range_vec.set(6, 6);
         range_vec.set(7, 7);
         range_vec.set(8, 8);
         range_vec.set(9, -1);
         range_vec.set(5, 5);
-        range_vec.make_contiguous(3..10, |slice| {
+        range_vec.make_contiguous_with(3..10, |slice| {
             for item in slice {
                 *item += 1;
             }
